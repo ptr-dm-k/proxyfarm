@@ -121,46 +121,83 @@ fi
 
 echo -e "${GREEN}Найдены модемы: $MODEM1 и $MODEM2${NC}"
 
-echo -e "${YELLOW}Шаг 3: Включение и подключение модемов${NC}"
+echo -e "${YELLOW}Шаг 3: Настройка подключений через NetworkManager${NC}"
 
-# Функция для подключения модема (идемпотентная)
-connect_modem() {
+# Убеждаемся, что NetworkManager управляет модемами
+systemctl enable --now NetworkManager 2>/dev/null || true
+
+# Функция для получения device-id модема (уникальный идентификатор)
+get_modem_device_id() {
     local MODEM=$1
-    echo "Настройка модема $MODEM..."
-    
-    # Получаем полную информацию о модеме
-    MODEM_INFO=$(mmcli -m $MODEM)
-    
-    # Проверяем состояние модема (используем несколько вариантов grep)
-    if echo "$MODEM_INFO" | grep -q "state.*disabled"; then
-        echo "  Модем выключен, включаем..."
-        mmcli -m $MODEM -e || {
-            echo "  Не удалось включить модем (возможно уже включен)"
-        }
-        sleep 3
-    fi
-    
-    # Проверяем подключение
-    MODEM_INFO=$(mmcli -m $MODEM)
-    
-    if echo "$MODEM_INFO" | grep -q "state.*connected"; then
-        echo "  Модем уже подключен к сети"
+    mmcli -m $MODEM | grep -oP "device-id:\s+\K\S+" || echo ""
+}
+
+# Функция для получения primary port модема
+get_modem_primary_port() {
+    local MODEM=$1
+    mmcli -m $MODEM | grep -oP "primary port:\s+\K\S+" || echo ""
+}
+
+# Функция для создания/обновления NM connection
+setup_nm_connection() {
+    local MODEM=$1
+    local CON_NAME=$2
+
+    echo "Настройка подключения $CON_NAME для модема $MODEM..."
+
+    # Получаем device-id для привязки к конкретному модему
+    local DEVICE_ID=$(get_modem_device_id $MODEM)
+    local PRIMARY_PORT=$(get_modem_primary_port $MODEM)
+    echo "  Device ID: $DEVICE_ID"
+    echo "  Primary port: $PRIMARY_PORT"
+
+    # Удаляем старое подключение если есть
+    nmcli connection delete "$CON_NAME" 2>/dev/null || true
+
+    # Создаём новое GSM подключение с привязкой к device-id
+    if [ -n "$DEVICE_ID" ]; then
+        nmcli connection add \
+            type gsm \
+            con-name "$CON_NAME" \
+            ifname "*" \
+            gsm.apn "$APN" \
+            gsm.device-id "$DEVICE_ID" \
+            connection.autoconnect yes \
+            ipv4.method auto \
+            ipv6.method disabled
     else
-        echo "  Подключение к сети (APN: $APN)..."
-        mmcli -m $MODEM --simple-connect="apn=$APN" || {
-            echo "  Ошибка подключения или модем уже подключается"
-        }
-        sleep 5
+        # Fallback: используем primary port
+        nmcli connection add \
+            type gsm \
+            con-name "$CON_NAME" \
+            ifname "$PRIMARY_PORT" \
+            gsm.apn "$APN" \
+            connection.autoconnect yes \
+            ipv4.method auto \
+            ipv6.method disabled
     fi
-    
-    # Показываем итоговое состояние
+
+    echo "  Подключение создано, активируем..."
+
+    # Активируем подключение
+    nmcli connection up "$CON_NAME" || {
+        echo "  Первая попытка не удалась, ждём и пробуем снова..."
+        sleep 5
+        nmcli connection up "$CON_NAME" || {
+            echo -e "${RED}  Не удалось активировать подключение $CON_NAME${NC}"
+            echo "  Проверьте логи: journalctl -u NetworkManager -n 50"
+            return 1
+        }
+    }
+
+    # Показываем состояние
     echo "  Состояние модема:"
     mmcli -m $MODEM | grep -E "state|signal|operator" || echo "  Информация недоступна"
 }
 
-connect_modem $MODEM1
+setup_nm_connection $MODEM1 "lte-modem1"
 echo ""
-connect_modem $MODEM2
+setup_nm_connection $MODEM2 "lte-modem2"
 
 sleep 5
 
@@ -170,55 +207,74 @@ echo -e "${YELLOW}Шаг 4: Определение сетевых интерфе
 echo "Доступные интерфейсы:"
 ip link show | grep -E "^[0-9]+:" | awk '{print $2}'
 
-# Находим интерфейсы wwan
-WWAN_IFACES=($(ip link | grep -oP 'wwan\d+'))
+# Ждём пока NetworkManager активирует подключения и назначит интерфейсы
+echo "Ожидание активации интерфейсов NetworkManager..."
+sleep 5
 
-if [ ${#WWAN_IFACES[@]} -lt 2 ]; then
-    echo -e "${RED}Найдено интерфейсов wwan: ${#WWAN_IFACES[@]} (нужно 2)${NC}"
-    echo "Ожидаем появления интерфейсов..."
-    
-    # Ждем до 30 секунд
-    for i in {1..30}; do
-        WWAN_IFACES=($(ip link | grep -oP 'wwan\d+'))
-        if [ ${#WWAN_IFACES[@]} -ge 2 ]; then
-            break
-        fi
-        sleep 1
-    done
+# Получаем интерфейсы из активных подключений NM
+get_connection_interface() {
+    local CON_NAME=$1
+    nmcli -g GENERAL.DEVICES connection show "$CON_NAME" 2>/dev/null | head -1
+}
+
+# Ожидаем появления интерфейсов (до 30 сек)
+for i in {1..30}; do
+    IFACE1=$(get_connection_interface "lte-modem1")
+    IFACE2=$(get_connection_interface "lte-modem2")
+
+    if [ -n "$IFACE1" ] && [ -n "$IFACE2" ]; then
+        break
+    fi
+
+    if [ $((i % 10)) -eq 0 ]; then
+        echo "  Ожидание интерфейсов... ($i сек)"
+    fi
+    sleep 1
+done
+
+# Если не удалось получить из NM, пробуем найти wwan интерфейсы напрямую
+if [ -z "$IFACE1" ] || [ -z "$IFACE2" ]; then
+    echo "Не удалось получить интерфейсы из NM, ищем wwan..."
+    WWAN_IFACES=($(ip link | grep -oP 'wwan\d+'))
+
+    if [ ${#WWAN_IFACES[@]} -ge 2 ]; then
+        IFACE1=${WWAN_IFACES[0]}
+        IFACE2=${WWAN_IFACES[1]}
+    fi
 fi
 
-if [ ${#WWAN_IFACES[@]} -lt 2 ]; then
-    echo -e "${RED}Так и не появились оба интерфейса wwan!${NC}"
-    echo "Проверьте подключение модемов и статус ModemManager"
+if [ -z "$IFACE1" ] || [ -z "$IFACE2" ]; then
+    echo -e "${RED}Не удалось определить интерфейсы!${NC}"
+    echo "Состояние NetworkManager:"
+    nmcli device status
+    nmcli connection show
     exit 1
 fi
 
-IFACE1=${WWAN_IFACES[0]}
-IFACE2=${WWAN_IFACES[1]}
-
 echo -e "${GREEN}Интерфейсы: $IFACE1 и $IFACE2${NC}"
-
-# Поднимаем интерфейсы если они down
-ip link set $IFACE1 up 2>/dev/null || true
-ip link set $IFACE2 up 2>/dev/null || true
-
-sleep 2
 
 echo -e "${YELLOW}Шаг 5: Получение IP адресов${NC}"
 
+# Показываем состояние NM подключений
+echo "Состояние NetworkManager подключений:"
+nmcli connection show --active | grep -E "lte-modem|gsm" || echo "  Нет активных GSM подключений"
+
 # Ждем получения IP адресов
-echo "Ожидание получения IP адресов (до 60 сек)..."
-for i in {1..60}; do
+echo "Ожидание получения IP адресов (до 90 сек)..."
+for i in {1..90}; do
     IP1=$(ip -4 addr show $IFACE1 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
     IP2=$(ip -4 addr show $IFACE2 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
-    
+
     if [ -n "$IP1" ] && [ -n "$IP2" ]; then
         echo -e "${GREEN}IP адреса получены!${NC}"
         break
     fi
-    
+
     if [ $((i % 10)) -eq 0 ]; then
         echo "  Ожидание... ($i сек)"
+        # Показываем прогресс
+        [ -n "$IP1" ] && echo "    $IFACE1: $IP1" || echo "    $IFACE1: ожидание..."
+        [ -n "$IP2" ] && echo "    $IFACE2: $IP2" || echo "    $IFACE2: ожидание..."
     fi
     sleep 1
 done
@@ -228,10 +284,18 @@ if [ -z "$IP1" ] || [ -z "$IP2" ]; then
     echo "IP1 ($IFACE1): ${IP1:-не получен}"
     echo "IP2 ($IFACE2): ${IP2:-не получен}"
     echo ""
+    echo "Диагностика NetworkManager:"
+    nmcli device status
+    echo ""
+    nmcli connection show
+    echo ""
     echo "Информация об интерфейсах:"
     ip addr show $IFACE1
     echo ""
     ip addr show $IFACE2
+    echo ""
+    echo "Логи ModemManager (последние 20 строк):"
+    journalctl -u ModemManager --no-pager -n 20
     exit 1
 fi
 
