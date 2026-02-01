@@ -19,6 +19,7 @@ fi
 
 # Конфигурация
 APN="internet"  # Замените на APN вашего оператора
+EXPECTED_MODEMS=2  # Ожидаемое количество модемов (0 = ждать стабилизации)
 
 echo -e "${YELLOW}Шаг 1: Установка необходимых пакетов${NC}"
 # check last apt update time (проверяем время модификации /var/lib/apt/lists)
@@ -52,14 +53,58 @@ echo -e "${YELLOW}Шаг 2: Определение модемов${NC}"
 # Перезапуск ModemManager для обновления состояния
 systemctl restart ModemManager
 
-# check ModemManager state in cycle
+# Ждём запуска сервиса
 for i in {1..10}; do
     if systemctl is-active --quiet ModemManager; then
         break
     fi
     echo "Ожидание запуска ModemManager... ($i)"
     sleep 2
-done   
+done
+
+# Функция подсчёта модемов
+count_modems() {
+    local count
+    count=$(mmcli -L 2>/dev/null | grep -c '/Modem/') || true
+    echo "${count:-0}"
+}
+
+# Ожидание обнаружения модемов
+TIMEOUT=60          # Максимальное время ожидания (сек)
+STABLE_TIME=5       # Время стабильности (сек) — если количество не меняется
+PREV_COUNT=0
+STABLE_COUNT=0
+ELAPSED=0
+
+echo "Ожидание обнаружения модемов..."
+
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    CURRENT_COUNT=$(count_modems)
+
+    if [ "$CURRENT_COUNT" -ne "$PREV_COUNT" ]; then
+        # Количество изменилось — сбрасываем счётчик стабильности
+        echo "  Обнаружено модемов: $CURRENT_COUNT"
+        PREV_COUNT=$CURRENT_COUNT
+        STABLE_COUNT=0
+    else
+        STABLE_COUNT=$((STABLE_COUNT + 1))
+    fi
+
+    # Если задано ожидаемое количество и оно достигнуто — выходим
+    if [ "$EXPECTED_MODEMS" -gt 0 ] && [ "$CURRENT_COUNT" -ge "$EXPECTED_MODEMS" ]; then
+        echo "  Найдено ожидаемое количество модемов: $CURRENT_COUNT"
+        break
+    fi
+
+    # Если количество стабильно STABLE_TIME секунд и есть хотя бы один модем
+    if [ "$STABLE_COUNT" -ge "$STABLE_TIME" ] && [ "$CURRENT_COUNT" -gt 0 ]; then
+        echo "  Количество модемов стабильно: $CURRENT_COUNT"
+        break
+    fi
+
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+done
 
 mmcli -L
 
@@ -67,9 +112,10 @@ mmcli -L
 MODEM1=$(mmcli -L | grep -oP '/Modem/\K[0-9]+' | sed -n '1p')
 MODEM2=$(mmcli -L | grep -oP '/Modem/\K[0-9]+' | sed -n '2p')
 
-if [ -z "$MODEM1" ] || [ -z "$MODEM2" ]; then
-    echo -e "${RED}Не удалось обнаружить оба модема!${NC}"
-    echo "Найдено модемов: $(mmcli -L | grep -c Modem || echo 0)"
+MODEM_COUNT=$(count_modems)
+if [ "$MODEM_COUNT" -lt 2 ]; then
+    echo -e "${RED}Найдено модемов: $MODEM_COUNT (нужно минимум 2)${NC}"
+    echo "Проверьте подключение модемов и USB-кабели"
     exit 1
 fi
 
