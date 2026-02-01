@@ -211,45 +211,59 @@ ip link show | grep -E "^[0-9]+:" | awk '{print $2}'
 echo "Ожидание активации интерфейсов NetworkManager..."
 sleep 5
 
-# Получаем интерфейсы из активных подключений NM
-get_connection_interface() {
-    local CON_NAME=$1
-    nmcli -g GENERAL.DEVICES connection show "$CON_NAME" 2>/dev/null | head -1
-}
+# NM показывает cdc-wdm* как device, но IP назначается на wwan* (data interface)
+# Нужно использовать wwan* интерфейсы для работы с IP
 
-# Ожидаем появления интерфейсов (до 30 сек)
+# Ожидаем появления wwan интерфейсов (до 30 сек)
+echo "Поиск wwan интерфейсов..."
 for i in {1..30}; do
-    IFACE1=$(get_connection_interface "lte-modem1")
-    IFACE2=$(get_connection_interface "lte-modem2")
+    WWAN_IFACES=($(ip link | grep -oP 'wwan\d+'))
 
-    if [ -n "$IFACE1" ] && [ -n "$IFACE2" ]; then
+    if [ ${#WWAN_IFACES[@]} -ge 2 ]; then
         break
     fi
 
     if [ $((i % 10)) -eq 0 ]; then
-        echo "  Ожидание интерфейсов... ($i сек)"
+        echo "  Ожидание интерфейсов... ($i сек), найдено: ${#WWAN_IFACES[@]}"
     fi
     sleep 1
 done
 
-# Если не удалось получить из NM, пробуем найти wwan интерфейсы напрямую
-if [ -z "$IFACE1" ] || [ -z "$IFACE2" ]; then
-    echo "Не удалось получить интерфейсы из NM, ищем wwan..."
-    WWAN_IFACES=($(ip link | grep -oP 'wwan\d+'))
-
-    if [ ${#WWAN_IFACES[@]} -ge 2 ]; then
-        IFACE1=${WWAN_IFACES[0]}
-        IFACE2=${WWAN_IFACES[1]}
-    fi
-fi
-
-if [ -z "$IFACE1" ] || [ -z "$IFACE2" ]; then
-    echo -e "${RED}Не удалось определить интерфейсы!${NC}"
+if [ ${#WWAN_IFACES[@]} -lt 2 ]; then
+    echo -e "${RED}Не удалось найти 2 wwan интерфейса!${NC}"
+    echo "Найдено: ${WWAN_IFACES[*]}"
+    echo ""
     echo "Состояние NetworkManager:"
     nmcli device status
     nmcli connection show
     exit 1
 fi
+
+# Определяем соответствие модем <-> wwan интерфейс через номер в имени
+# cdc-wdm0 соответствует wwan0, cdc-wdm1 -> wwan1
+get_wwan_for_modem() {
+    local MODEM=$1
+    local CDM_PORT=$(get_modem_primary_port $MODEM)  # например cdc-wdm0
+    local NUM=$(echo "$CDM_PORT" | grep -oP '\d+$')   # извлекаем номер
+    echo "wwan${NUM}"
+}
+
+IFACE1=$(get_wwan_for_modem $MODEM1)
+IFACE2=$(get_wwan_for_modem $MODEM2)
+
+# Проверяем что интерфейсы существуют
+if ! ip link show $IFACE1 &>/dev/null; then
+    echo -e "${YELLOW}Интерфейс $IFACE1 не найден, используем первый доступный wwan${NC}"
+    IFACE1=${WWAN_IFACES[0]}
+fi
+if ! ip link show $IFACE2 &>/dev/null; then
+    echo -e "${YELLOW}Интерфейс $IFACE2 не найден, используем второй доступный wwan${NC}"
+    IFACE2=${WWAN_IFACES[1]}
+fi
+
+# Поднимаем интерфейсы
+ip link set $IFACE1 up 2>/dev/null || true
+ip link set $IFACE2 up 2>/dev/null || true
 
 echo -e "${GREEN}Интерфейсы: $IFACE1 и $IFACE2${NC}"
 
@@ -259,43 +273,96 @@ echo -e "${YELLOW}Шаг 5: Получение IP адресов${NC}"
 echo "Состояние NetworkManager подключений:"
 nmcli connection show --active | grep -E "lte-modem|gsm" || echo "  Нет активных GSM подключений"
 
-# Ждем получения IP адресов
-echo "Ожидание получения IP адресов (до 90 сек)..."
-for i in {1..90}; do
+# Функция для получения IP из bearer и ручной настройки интерфейса
+configure_ip_from_bearer() {
+    local MODEM=$1
+    local IFACE=$2
+
+    echo "  Пробуем получить IP из bearer для модема $MODEM -> $IFACE"
+
+    # Получаем номер bearer
+    local BEARER=$(mmcli -m $MODEM 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    if [ -z "$BEARER" ]; then
+        echo "    Bearer не найден"
+        return 1
+    fi
+
+    echo "    Bearer: $BEARER"
+
+    # Получаем информацию из bearer
+    local BEARER_INFO=$(mmcli -b $BEARER 2>/dev/null)
+    local IP=$(echo "$BEARER_INFO" | grep -oP 'address:\s+\K[\d.]+' | head -1)
+    local GW=$(echo "$BEARER_INFO" | grep -oP 'gateway:\s+\K[\d.]+' | head -1)
+    local PREFIX=$(echo "$BEARER_INFO" | grep -oP 'prefix:\s+\K\d+' | head -1)
+    local DNS=$(echo "$BEARER_INFO" | grep -oP 'dns:\s+\K[\d.]+' | head -1)
+
+    if [ -z "$IP" ] || [ -z "$GW" ]; then
+        echo "    IP или Gateway не найдены в bearer"
+        echo "    Bearer info: $BEARER_INFO"
+        return 1
+    fi
+
+    PREFIX=${PREFIX:-24}
+    echo "    IP: $IP/$PREFIX, Gateway: $GW"
+
+    # Удаляем старый IP если есть
+    ip addr flush dev $IFACE 2>/dev/null || true
+
+    # Назначаем IP
+    ip addr add $IP/$PREFIX dev $IFACE
+    ip link set $IFACE up
+
+    echo "    IP назначен на $IFACE"
+    return 0
+}
+
+# Ждем получения IP адресов (сначала автоматически)
+echo "Ожидание получения IP адресов (до 30 сек)..."
+for i in {1..30}; do
     IP1=$(ip -4 addr show $IFACE1 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
     IP2=$(ip -4 addr show $IFACE2 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
 
     if [ -n "$IP1" ] && [ -n "$IP2" ]; then
-        echo -e "${GREEN}IP адреса получены!${NC}"
+        echo -e "${GREEN}IP адреса получены автоматически!${NC}"
         break
     fi
 
     if [ $((i % 10)) -eq 0 ]; then
         echo "  Ожидание... ($i сек)"
-        # Показываем прогресс
-        [ -n "$IP1" ] && echo "    $IFACE1: $IP1" || echo "    $IFACE1: ожидание..."
-        [ -n "$IP2" ] && echo "    $IFACE2: $IP2" || echo "    $IFACE2: ожидание..."
     fi
     sleep 1
 done
+
+# Если автоматически не получилось - пробуем вручную из bearer
+if [ -z "$IP1" ]; then
+    echo -e "${YELLOW}IP для $IFACE1 не получен автоматически, пробуем из bearer...${NC}"
+    configure_ip_from_bearer $MODEM1 $IFACE1
+    IP1=$(ip -4 addr show $IFACE1 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
+fi
+
+if [ -z "$IP2" ]; then
+    echo -e "${YELLOW}IP для $IFACE2 не получен автоматически, пробуем из bearer...${NC}"
+    configure_ip_from_bearer $MODEM2 $IFACE2
+    IP2=$(ip -4 addr show $IFACE2 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1 || echo "")
+fi
 
 if [ -z "$IP1" ] || [ -z "$IP2" ]; then
     echo -e "${RED}Не удалось получить IP адреса!${NC}"
     echo "IP1 ($IFACE1): ${IP1:-не получен}"
     echo "IP2 ($IFACE2): ${IP2:-не получен}"
     echo ""
-    echo "Диагностика NetworkManager:"
-    nmcli device status
+    echo "Диагностика:"
+    echo "Модем 1 bearer:"
+    BEARER1=$(mmcli -m $MODEM1 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    [ -n "$BEARER1" ] && mmcli -b $BEARER1 || echo "  Bearer не найден"
     echo ""
-    nmcli connection show
+    echo "Модем 2 bearer:"
+    BEARER2=$(mmcli -m $MODEM2 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    [ -n "$BEARER2" ] && mmcli -b $BEARER2 || echo "  Bearer не найден"
     echo ""
-    echo "Информация об интерфейсах:"
-    ip addr show $IFACE1
-    echo ""
-    ip addr show $IFACE2
-    echo ""
-    echo "Логи ModemManager (последние 20 строк):"
-    journalctl -u ModemManager --no-pager -n 20
+    echo "Состояние модемов:"
+    mmcli -m $MODEM1 | grep -E "state|bearer"
+    mmcli -m $MODEM2 | grep -E "state|bearer"
     exit 1
 fi
 
