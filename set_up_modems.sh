@@ -155,6 +155,7 @@ setup_nm_connection() {
     nmcli connection delete "$CON_NAME" 2>/dev/null || true
 
     # Создаём новое GSM подключение с привязкой к device-id
+    # ipv4.never-default=yes - запрещаем NM добавлять default route (мы настроим multipath сами)
     if [ -n "$DEVICE_ID" ]; then
         nmcli connection add \
             type gsm \
@@ -164,6 +165,7 @@ setup_nm_connection() {
             gsm.device-id "$DEVICE_ID" \
             connection.autoconnect yes \
             ipv4.method auto \
+            ipv4.never-default yes \
             ipv6.method disabled
     else
         # Fallback: используем primary port
@@ -174,6 +176,7 @@ setup_nm_connection() {
             gsm.apn "$APN" \
             connection.autoconnect yes \
             ipv4.method auto \
+            ipv4.never-default yes \
             ipv6.method disabled
     fi
 
@@ -366,6 +369,15 @@ if [ -z "$IP1" ] || [ -z "$IP2" ]; then
     exit 1
 fi
 
+# Функция для получения шлюза из bearer ModemManager
+get_gateway_from_bearer() {
+    local MODEM=$1
+    local BEARER=$(mmcli -m $MODEM 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    if [ -n "$BEARER" ]; then
+        mmcli -b $BEARER 2>/dev/null | grep -oP 'gateway:\s+\K[\d.]+' | head -1
+    fi
+}
+
 # Получаем шлюзы
 echo "Определение шлюзов..."
 sleep 2
@@ -373,12 +385,32 @@ sleep 2
 GW1=$(ip route show dev $IFACE1 | grep default | awk '{print $3}' | head -1)
 GW2=$(ip route show dev $IFACE2 | grep default | awk '{print $3}' | head -1)
 
-# Если шлюзы не найдены автоматически, пробуем альтернативный метод
+# Функция для вычисления gateway из IP (предполагаем .1 в подсети)
+guess_gateway_from_ip() {
+    local IP=$1
+    echo "$IP" | sed 's/\.[0-9]*$/.1/'
+}
+
+# Если шлюзы не найдены в route table, получаем из bearer
 if [ -z "$GW1" ]; then
-    GW1=$(ip route | grep $IFACE1 | grep default | awk '{print $3}' | head -1)
+    echo "  Шлюз для $IFACE1 не найден в routes, получаем из bearer..."
+    GW1=$(get_gateway_from_bearer $MODEM1)
 fi
 if [ -z "$GW2" ]; then
-    GW2=$(ip route | grep $IFACE2 | grep default | awk '{print $3}' | head -1)
+    echo "  Шлюз для $IFACE2 не найден в routes, получаем из bearer..."
+    GW2=$(get_gateway_from_bearer $MODEM2)
+fi
+
+# Если bearer не дал gateway - пробуем угадать (.1 в подсети)
+if [ -z "$GW1" ] && [ -n "$IP1" ]; then
+    echo "  Bearer для $IFACE1 не дал gateway, вычисляем из IP..."
+    GW1=$(guess_gateway_from_ip $IP1)
+    echo "  Предполагаемый gateway: $GW1"
+fi
+if [ -z "$GW2" ] && [ -n "$IP2" ]; then
+    echo "  Bearer для $IFACE2 не дал gateway, вычисляем из IP..."
+    GW2=$(guess_gateway_from_ip $IP2)
+    echo "  Предполагаемый gateway: $GW2"
 fi
 
 if [ -z "$GW1" ] || [ -z "$GW2" ]; then
@@ -386,8 +418,13 @@ if [ -z "$GW1" ] || [ -z "$GW2" ]; then
     echo "Gateway1 ($IFACE1): ${GW1:-не найден}"
     echo "Gateway2 ($IFACE2): ${GW2:-не найден}"
     echo ""
-    echo "Таблица маршрутизации:"
-    ip route show
+    echo "Диагностика bearer:"
+    echo "Модем 1:"
+    BEARER1=$(mmcli -m $MODEM1 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    [ -n "$BEARER1" ] && mmcli -b $BEARER1 | grep -E "address|gateway" || echo "  Bearer не найден"
+    echo "Модем 2:"
+    BEARER2=$(mmcli -m $MODEM2 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1)
+    [ -n "$BEARER2" ] && mmcli -b $BEARER2 | grep -E "address|gateway" || echo "  Bearer не найден"
     exit 1
 fi
 
@@ -420,8 +457,9 @@ ip route add default via $GW2 dev $IFACE2 table modem2
 ip rule add from $IP1 table modem1 priority 100
 ip rule add from $IP2 table modem2 priority 100
 
-# Удаляем старый default route если есть multipath
-ip route del default 2>/dev/null || true
+# Удаляем ВСЕ default routes (NetworkManager может добавить несколько)
+echo "Очистка существующих default routes..."
+while ip route del default 2>/dev/null; do :; done
 
 # Основной маршрут с балансировкой 50/50
 ip route add default scope global \

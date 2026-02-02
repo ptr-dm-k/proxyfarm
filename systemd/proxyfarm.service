@@ -1,0 +1,26 @@
+[Unit]
+Description=ProxyFarm - LTE Modem Management Service
+After=network.target ModemManager.service NetworkManager.service
+Wants=ModemManager.service NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/proxyfarm
+ExecStart=/opt/proxyfarm/venv/bin/python -m proxyfarm.main
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proxyfarm
+
+# Security (commented out since we need root for modem access)
+# PrivateTmp=true
+# ProtectSystem=strict
+# ReadWritePaths=/opt/proxyfarm
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+api:
+  host: "0.0.0.0"
+  port: 8080
+  api_key: "change-me-to-secure-key"
+
+modems:
+  apn: "internet"
+  expected_count: 2
+  connection_prefix: "lte-modem"
+
+monitor:
+  enabled: true
+  interval: 30  # seconds
+  auto_reconnect: true
+  health_check_url: "http://ifconfig.me"
+
+scripts:
+  setup_modems: "/opt/proxyfarm/scripts/setup_modems.sh"
