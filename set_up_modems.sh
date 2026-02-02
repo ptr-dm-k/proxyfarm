@@ -440,9 +440,21 @@ iptables -t nat -A POSTROUTING -o $IFACE2 -j MASQUERADE
 # Сохранение правил iptables
 netfilter-persistent save 2>/dev/null || iptables-save > /etc/iptables/rules.v4
 
-echo -e "${YELLOW}Шаг 9: Включение IP forwarding${NC}"
+echo -e "${YELLOW}Шаг 9: Включение IP forwarding и настройка балансировки${NC}"
+
+# Включаем IP forwarding
 echo "net.ipv4.ip_forward=1" > /etc/sysctl.d/99-ip-forward.conf
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
+
+# ВАЖНО: Включаем L4 hash для multipath routing
+# Без этого Linux использует только L3 (dst IP) и всегда выбирает один маршрут для одного destination
+# С fib_multipath_hash_policy=1 используется 5-tuple (src IP, dst IP, src port, dst port, protocol)
+# Это позволяет разным соединениям к одному серверу идти через разные интерфейсы
+echo "net.ipv4.fib_multipath_hash_policy=1" >> /etc/sysctl.d/99-ip-forward.conf
+sysctl -w net.ipv4.fib_multipath_hash_policy=1 >/dev/null
+
+# Очищаем route cache чтобы изменения применились
+ip route flush cache 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}=== Настройка завершена! ===${NC}"
@@ -465,4 +477,10 @@ echo ""
 echo "Для проверки выполните:"
 echo "  curl --interface $IFACE1 ifconfig.me"
 echo "  curl --interface $IFACE2 ifconfig.me"
-echo "  curl ifconfig.me  # Будет использовать балансировку"
+echo ""
+echo "Проверка балансировки (разные соединения могут идти через разные модемы):"
+echo "  for i in {1..10}; do curl -s ifconfig.me; echo; done"
+echo ""
+echo "ПРИМЕЧАНИЕ: Балансировка работает per-connection (по 5-tuple: src/dst IP + ports)."
+echo "Один curl к одному серверу всегда идёт через один интерфейс."
+echo "Разные соединения распределяются между модемами."
