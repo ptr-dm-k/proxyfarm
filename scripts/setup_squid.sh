@@ -136,7 +136,7 @@ fqdncache_size 2048
 # Connection pooling for better performance
 client_persistent_connections on
 server_persistent_connections on
-persistent_connection_timeout 1 minute
+pconn_timeout 1 minute
 half_closed_clients off
 EOF
 
