@@ -131,6 +131,13 @@ refresh_pattern .               0       20%     4320
 dns_nameservers 8.8.8.8 8.8.4.4
 positive_dns_ttl 6 hours
 negative_dns_ttl 1 minute
+fqdncache_size 2048
+
+# Connection pooling for better performance
+client_persistent_connections on
+server_persistent_connections on
+persistent_connection_timeout 1 minute
+half_closed_clients off
 EOF
 
 echo ""
