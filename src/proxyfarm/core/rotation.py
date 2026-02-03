@@ -9,6 +9,7 @@ from ..config import get_config
 from ..schemas import RotationResult
 from .modem import modem_manager
 from .network import network_manager
+from .squid import squid_manager
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,12 @@ class IPRotator:
             await network_manager.flush_routes()
 
             logger.info(f"IP rotated for modem {modem_id}: {old_ip} -> {new_ip}")
+
+            # Step 5: Reconfigure Squid to use updated IPs
+            logger.info("Reconfiguring Squid proxy with updated IPs")
+            squid_reconfigured = await squid_manager.reconfigure()
+            if not squid_reconfigured:
+                logger.warning("Squid reconfiguration failed, but IP rotation was successful")
 
             return RotationResult(
                 modem_id=modem_id,
