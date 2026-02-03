@@ -129,6 +129,10 @@ fi
 
 cat >> "$SQUID_CONF" <<'EOF'
 
+# IPv4 only configuration
+dns_v4_first on
+dns_v6_first off
+
 # Cache and logs
 cache_dir ufs /var/spool/squid 100 16 256
 access_log /var/log/squid/access.log squid
