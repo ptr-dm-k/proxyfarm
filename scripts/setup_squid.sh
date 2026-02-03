@@ -96,6 +96,23 @@ EOF
 
 cat >> "$SQUID_CONF" <<'EOF'
 
+# Performance optimizations
+# Disable IPv6 to avoid delays
+dns_v4_only on
+
+# Disable reverse DNS lookups for speed
+client_dns off
+log_fqdn off
+
+# Connection timeouts (reduce delays)
+connect_timeout 10 seconds
+read_timeout 30 seconds
+request_timeout 30 seconds
+persistent_request_timeout 30 seconds
+
+# File descriptor limits
+max_filedescriptors 4096
+
 # Cache and logs
 cache_dir ufs /var/spool/squid 100 16 256
 access_log /var/log/squid/access.log squid
@@ -105,6 +122,7 @@ cache_store_log none
 # Performance tuning
 maximum_object_size 4096 KB
 cache_mem 256 MB
+minimum_object_size 0 KB
 
 # Disable caching for dynamic content
 refresh_pattern ^ftp:           1440    20%     10080
@@ -112,8 +130,10 @@ refresh_pattern ^gopher:        1440    0%      1440
 refresh_pattern -i (/cgi-bin/|\?) 0     0%      0
 refresh_pattern .               0       20%     4320
 
-# DNS
+# Fast DNS with Google DNS
 dns_nameservers 8.8.8.8 8.8.4.4
+positive_dns_ttl 6 hours
+negative_dns_ttl 1 minute
 EOF
 
 echo ""
@@ -133,6 +153,15 @@ if squid -k parse 2>&1 | grep -q "ERROR"; then
     squid -k parse
     exit 1
 fi
+
+# Increase system limits for Squid
+echo "Configuring system limits..."
+mkdir -p /etc/systemd/system/squid.service.d
+cat > /etc/systemd/system/squid.service.d/override.conf <<'LIMITEOF'
+[Service]
+LimitNOFILE=8192
+LIMITEOF
+systemctl daemon-reload
 
 # Restart Squid
 echo "Restarting Squid..."
