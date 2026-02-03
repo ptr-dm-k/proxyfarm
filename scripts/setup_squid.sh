@@ -97,13 +97,6 @@ EOF
 cat >> "$SQUID_CONF" <<'EOF'
 
 # Performance optimizations
-# Disable IPv6 to avoid delays
-dns_v4_only on
-
-# Disable reverse DNS lookups for speed
-client_dns off
-log_fqdn off
-
 # Connection timeouts (reduce delays)
 connect_timeout 10 seconds
 read_timeout 30 seconds
@@ -112,6 +105,10 @@ persistent_request_timeout 30 seconds
 
 # File descriptor limits
 max_filedescriptors 4096
+
+# Disable unnecessary features for speed
+forwarded_for off
+via off
 
 # Cache and logs
 cache_dir ufs /var/spool/squid 100 16 256
