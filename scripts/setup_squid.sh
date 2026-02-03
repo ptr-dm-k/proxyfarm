@@ -89,49 +89,12 @@ cat >> "$SQUID_CONF" <<'EOF'
 # Load balancing across modems using random ACLs
 EOF
 
-# Generate ACLs and tcp_outgoing_address for load balancing
-NUM_MODEMS=${#WWAN_IPS[@]}
-
-if [ $NUM_MODEMS -eq 1 ]; then
-    # Only one modem - use it directly
-    echo "tcp_outgoing_address ${WWAN_IPS[0]}" >> "$SQUID_CONF"
-elif [ $NUM_MODEMS -eq 2 ]; then
-    # Two modems - 50/50 split
-    cat >> "$SQUID_CONF" <<EOF
-acl modem_select random 1/2
-tcp_outgoing_address ${WWAN_IPS[0]} modem_select
-tcp_outgoing_address ${WWAN_IPS[1]} !modem_select
-EOF
-else
-    # Multiple modems - use hash-based distribution
-    for i in "${!WWAN_IPS[@]}"; do
-        PROB=$((i + 1))
-        TOTAL=$NUM_MODEMS
-        echo "acl modem_${i} random ${PROB}/${TOTAL}" >> "$SQUID_CONF"
-        if [ $i -eq 0 ]; then
-            echo "tcp_outgoing_address ${WWAN_IPS[$i]} modem_${i}" >> "$SQUID_CONF"
-        elif [ $i -eq $((NUM_MODEMS - 1)) ]; then
-            # Last modem gets everything else
-            CONDITIONS=""
-            for j in $(seq 0 $((i - 1))); do
-                CONDITIONS="$CONDITIONS !modem_${j}"
-            done
-            echo "tcp_outgoing_address ${WWAN_IPS[$i]} $CONDITIONS" >> "$SQUID_CONF"
-        else
-            CONDITIONS="!modem_0"
-            for j in $(seq 1 $((i - 1))); do
-                CONDITIONS="$CONDITIONS !modem_${j}"
-            done
-            echo "tcp_outgoing_address ${WWAN_IPS[$i]} modem_${i} $CONDITIONS" >> "$SQUID_CONF"
-        fi
-    done
-fi
+# Note: Load balancing is handled by kernel multipath routing
+# configured by set_up_modems.sh script.
+# Active modems with IPs: ${WWAN_IPS[@]}
+# Squid will use default routing which automatically load balances.
 
 cat >> "$SQUID_CONF" <<'EOF'
-
-# IPv4 only configuration
-dns_v4_first on
-dns_v6_first off
 
 # Cache and logs
 cache_dir ufs /var/spool/squid 100 16 256
