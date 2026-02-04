@@ -6,13 +6,26 @@ set -e
 echo "=== Setting up multipath routing through modems ==="
 echo ""
 
-# Get modem gateway IPs from bearers
-echo "Getting gateway IPs from ModemManager bearers..."
-GW0=$(mmcli -m 0 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep -oP 'gateway:\s*\K[\d.]+' || echo "")
-GW1=$(mmcli -m 1 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep -oP 'gateway:\s*\K[\d.]+' || echo "")
+# Get gateway IPs from wwan interfaces (first IP in subnet is usually gateway)
+echo "Getting gateway IPs from wwan interfaces..."
+IP0=$(ip -4 addr show wwan0 2>/dev/null | grep -oP 'inet \K[\d.]+' || echo "")
+IP1=$(ip -4 addr show wwan1 2>/dev/null | grep -oP 'inet \K[\d.]+' || echo "")
 
-echo "Modem 0 gateway: ${GW0:-not found}"
-echo "Modem 1 gateway: ${GW1:-not found}"
+# Calculate gateway (usually .1 in the subnet)
+if [ -n "$IP0" ]; then
+    GW0=$(echo $IP0 | sed 's/\.[0-9]*$/\.1/')
+else
+    GW0=""
+fi
+
+if [ -n "$IP1" ]; then
+    GW1=$(echo $IP1 | sed 's/\.[0-9]*$/\.1/')
+else
+    GW1=""
+fi
+
+echo "wwan0: ${IP0:-not found} -> gateway: ${GW0:-none}"
+echo "wwan1: ${IP1:-not found} -> gateway: ${GW1:-none}"
 echo ""
 
 # Remove old WiFi default route with low metric
