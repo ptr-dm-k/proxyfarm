@@ -8,8 +8,8 @@ echo ""
 
 # Get modem gateway IPs from bearers
 echo "Getting gateway IPs from ModemManager bearers..."
-GW0=$(mmcli -m 0 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep gateway | awk '{print $2}' || echo "")
-GW1=$(mmcli -m 1 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep gateway | awk '{print $2}' || echo "")
+GW0=$(mmcli -m 0 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep -oP 'gateway:\s*\K[\d.]+' || echo "")
+GW1=$(mmcli -m 1 2>/dev/null | grep -oP 'Bearer/\K[0-9]+' | head -1 | xargs -I{} mmcli -b {} 2>/dev/null | grep -oP 'gateway:\s*\K[\d.]+' || echo "")
 
 echo "Modem 0 gateway: ${GW0:-not found}"
 echo "Modem 1 gateway: ${GW1:-not found}"
