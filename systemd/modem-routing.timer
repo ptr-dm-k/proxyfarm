@@ -1,0 +1,11 @@
+[Unit]
+Description=Modem Routing Maintenance Timer
+Requires=modem-routing.service
+
+[Timer]
+# Run every 5 minutes to maintain routing
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
