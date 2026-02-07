@@ -38,29 +38,34 @@
 git clone https://github.com/yourusername/proxyfarm.git /root/repo/proxyfarm
 cd /root/repo/proxyfarm
 
-# 2. Установить зависимости
-apt update
-apt install -y squid openvpn python3-pip python3-venv \
-  modemmanager network-manager curl socat expect
+# 2. Запустить интерактивный установщик
+cd scripts
+sudo ./install.sh
 
-# 3. Установить Python зависимости
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Выберите "1) Install ALL (Full Setup)" для полной установки
+```
 
-# 4. Настроить Squid proxy
-./scripts/setup_squid.sh
+Или установка отдельных компонентов:
 
-# 5. Настроить multipath routing (выберите один вариант)
+```bash
+cd /root/repo/proxyfarm/scripts
 
-# Вариант A: NetworkManager Dispatcher (рекомендуется)
-./scripts/install_nm_dispatcher.sh
+# Установить системные зависимости (первый раз)
+sudo ./setup/bootstrap.sh
 
-# Вариант B: Systemd Service с периодической проверкой
-./scripts/install_routing_service.sh
+# Настроить Squid proxy
+sudo ./setup/squid.sh
 
-# 6. Проверить настройку
-./scripts/check_system.sh  # создайте из TROUBLESHOOTING.md
+# Настроить multipath routing
+sudo ./setup/routing.sh
+
+# Установить persistence (выберите один вариант):
+sudo ./setup/nm-dispatcher.sh      # Рекомендуется
+# или
+sudo ./setup/systemd-service.sh
+
+# Проверить настройку
+./check.sh
 ```
 
 ### Настройка VPS (опционально)

@@ -1,10 +1,10 @@
 #!/bin/bash
 # Setup multipath routing through LTE modems
 
-set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
-echo "=== Setting up multipath routing through modems ==="
-echo ""
+print_header "Setting up multipath routing through modems"
 
 # Get gateway IPs from wwan interfaces (first IP in subnet is usually gateway)
 echo "Getting gateway IPs from wwan interfaces..."

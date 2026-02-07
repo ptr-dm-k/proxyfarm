@@ -1,7 +1,10 @@
 #!/bin/bash
-set -e
+# Squid Proxy Setup for ProxyFarm
 
-echo "=== Squid Proxy Setup for LTE Modems ==="
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+print_header "Squid Proxy Setup for LTE Modems"
 
 # Configuration
 SQUID_PORT=3128
@@ -43,7 +46,10 @@ fi
 echo "Found ${#WWAN_IPS[@]} active modem(s)"
 
 # Generate Squid configuration
-echo "Generating Squid configuration..."
+log_info "Generating Squid configuration..."
+
+# Backup existing config
+backup_file "$SQUID_CONF" "squid.conf"
 
 cat > "$SQUID_CONF" <<'EOF'
 # Squid configuration for ProxyFarm
