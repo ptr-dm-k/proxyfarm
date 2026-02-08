@@ -301,15 +301,17 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
     """Главный handler для клиента"""
 
     addr = client_writer.get_extra_info('peername')
-    logger.debug(f"New connection from {addr}")
+    logger.info(f"New connection from {addr}")  # Changed to INFO
 
     try:
         # Читаем первую строку запроса
         request_line = await client_reader.readline()
         if not request_line:
+            logger.warning(f"Empty request from {addr}")
             return
 
         request_line = request_line.decode('utf-8').strip()
+        logger.info(f"Request: {request_line}")
 
         # Читаем headers
         headers = {}
@@ -325,10 +327,12 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
 
         # Проверяем авторизацию
         auth_header = headers.get('proxy-authorization', '')
+        logger.info(f"Auth header: {auth_header[:50] if auth_header else 'None'}")
         auth = parse_proxy_auth(auth_header)
 
         if not auth:
             # 407 Proxy Authentication Required
+            logger.warning(f"No auth from {addr}, sending 407")
             response = (
                 b'HTTP/1.1 407 Proxy Authentication Required\r\n'
                 b'Proxy-Authenticate: Basic realm="ProxyFarm"\r\n'
@@ -341,13 +345,17 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
             return
 
         username, password = auth
+        logger.info(f"Auth attempt: user={username}")
 
         if not check_credentials(username, password):
             # 403 Forbidden
+            logger.warning(f"Invalid credentials for {username} from {addr}")
             client_writer.write(b'HTTP/1.1 403 Forbidden\r\n\r\n')
             await client_writer.drain()
             client_writer.close()
             return
+
+        logger.info(f"Authenticated: {username}")
 
         # Определяем модем для пользователя
         modem = CONFIG['users'][username]['modem']
