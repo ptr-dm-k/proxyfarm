@@ -1,3 +1,7 @@
+#orangepi
 ip:root@192.168.50.111
 user:root
 password:LpL##xX1!
+
+#vps
+/Users/petr/keys/oracle_ubuntu.sh
