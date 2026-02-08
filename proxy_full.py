@@ -404,13 +404,21 @@ async def main():
     """Главная функция"""
 
     # Проверяем доступность модемов
-    logger.info("Checking modems...")
+    logger.info("Checking modems (initial check)...")
+    available_count = 0
     for modem in CONFIG['modems'].keys():
         ip = get_modem_ip(modem)
         if ip:
             logger.info(f"  {modem}: {ip}")
+            available_count += 1
         else:
-            logger.warning(f"  {modem}: not available")
+            logger.warning(f"  {modem}: not available yet")
+
+    if available_count == 0:
+        logger.warning("No modems available at startup - this is OK if modems are still initializing")
+        logger.info("Modems will be checked dynamically on each request")
+    else:
+        logger.info(f"{available_count}/{len(CONFIG['modems'])} modems available")
 
     # Получаем настройки сервера из конфига
     host = CONFIG.get('server', {}).get('host', '0.0.0.0')

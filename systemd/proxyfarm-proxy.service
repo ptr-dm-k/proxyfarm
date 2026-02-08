@@ -1,16 +1,26 @@
 [Unit]
 Description=ProxyFarm HTTP/HTTPS Proxy Server
-After=network.target ModemManager.service NetworkManager.service
-Wants=network.target
+After=network-online.target ModemManager.service NetworkManager.service
+Wants=network-online.target
+# Wait for modems to initialize
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/root/repo/proxyfarm
+
+# Wait for modems to be ready (smart wait with timeout)
+ExecStartPre=/root/repo/proxyfarm/scripts/wait_for_modems.sh
+
 # Use venv if available, fallback to system python
 ExecStart=/bin/bash -c 'source /root/proxyfarm-venv/bin/activate 2>/dev/null && python proxy_full.py || /usr/bin/python3 proxy_full.py'
+
+# Auto-restart on failure
 Restart=always
 RestartSec=5
+TimeoutStartSec=60
 
 # Logging
 StandardOutput=journal
