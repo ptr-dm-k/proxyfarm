@@ -140,13 +140,17 @@ async def tunnel_data(reader_src: asyncio.StreamReader, writer_dst: asyncio.Stre
         while True:
             data = await reader_src.read(8192)
             if not data:
+                logger.info(f"Tunnel {direction} EOF")
                 break
 
             writer_dst.write(data)
             await writer_dst.drain()
 
+    except asyncio.CancelledError:
+        logger.info(f"Tunnel {direction} cancelled")
+        raise
     except Exception as e:
-        logger.debug(f"Tunnel {direction} closed: {e}")
+        logger.warning(f"Tunnel {direction} error: {e}")
     finally:
         try:
             writer_dst.close()
@@ -174,6 +178,7 @@ async def handle_connect(
 
     logger.info(f"{username} ({modem}): CONNECT {target_host}:{target_port}")
 
+    server_writer = None
     try:
         # Создаем соединение к target через нужный модем
         server_reader, server_writer = await create_bound_connection(
@@ -184,22 +189,35 @@ async def handle_connect(
         client_writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
         await client_writer.drain()
 
+        logger.info(f"{username} tunnel established to {target_host}:{target_port}")
+
         # Туннелируем данные в обе стороны
         await asyncio.gather(
             tunnel_data(client_reader, server_writer, f"{username} client→server"),
-            tunnel_data(server_reader, client_writer, f"{username} server→client")
+            tunnel_data(server_reader, client_writer, f"{username} server→client"),
+            return_exceptions=True
         )
 
+        logger.info(f"{username} tunnel closed for {target_host}:{target_port}")
+
     except Exception as e:
-        logger.error(f"CONNECT tunnel error: {e}")
+        logger.error(f"CONNECT tunnel error for {username}: {e}")
         try:
             client_writer.write(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
             await client_writer.drain()
         except Exception:
             pass
     finally:
-        client_writer.close()
+        # Закрываем оба соединения
+        if server_writer:
+            try:
+                server_writer.close()
+                await server_writer.wait_closed()
+            except Exception:
+                pass
+
         try:
+            client_writer.close()
             await client_writer.wait_closed()
         except Exception:
             pass
