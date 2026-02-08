@@ -1,0 +1,32 @@
+# ProxyFarm Proxy Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 3128
+
+users:
+  user1:
+    password: "pass1"
+    modem: "wwan0"
+    rate_limit: 60  # requests per minute
+
+  user2:
+    password: "pass2"
+    modem: "wwan1"
+    rate_limit: 120
+
+  user3:
+    password: "pass3"
+    modem: "wwan0"
+    rate_limit: 60
+
+modems:
+  wwan0:
+    id: 0
+    name: "Modem 0"
+    max_users: 10
+
+  wwan1:
+    id: 1
+    name: "Modem 1"
+    max_users: 10

@@ -1,0 +1,24 @@
+[Unit]
+Description=ProxyFarm HTTP/HTTPS Proxy Server
+After=network.target ModemManager.service NetworkManager.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/repo/proxyfarm
+ExecStart=/usr/bin/python3 /root/repo/proxyfarm/proxy_full.py
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proxyfarm-proxy
+
+# Security (optional)
+# NoNewPrivileges=true
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
