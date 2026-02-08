@@ -7,7 +7,8 @@ Wants=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/repo/proxyfarm
-ExecStart=/usr/bin/python3 /root/repo/proxyfarm/proxy_full.py
+# Use venv if available, fallback to system python
+ExecStart=/bin/bash -c 'source /root/proxyfarm-venv/bin/activate 2>/dev/null && python proxy_full.py || /usr/bin/python3 proxy_full.py'
 Restart=always
 RestartSec=5
 
